@@ -1,0 +1,67 @@
+name: room-booking
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: booking
+      POSTGRES_DB: booking
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python3 scripts/init_env.py first}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking -d booking"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  migrate:
+    build: .
+    environment: &app_env
+      DATABASE_URL: postgresql+psycopg://booking:${POSTGRES_PASSWORD}@db:5432/booking
+      JWT_SECRET: ${JWT_SECRET:?Run python3 scripts/init_env.py first}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+  api:
+    build: .
+    environment: *app_env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  test-db:
+    image: postgres:18
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: booking
+      POSTGRES_DB: booking_test
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U booking -d booking_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  tests:
+    profiles: ["test"]
+    build:
+      context: .
+      target: test
+    environment:
+      DATABASE_URL: postgresql+psycopg://booking:${POSTGRES_PASSWORD}@test-db:5432/booking_test
+      TEST_DATABASE_URL: postgresql+psycopg://booking:${POSTGRES_PASSWORD}@test-db:5432/booking_test
+      JWT_SECRET: ${JWT_SECRET}
+    depends_on:
+      test-db:
+        condition: service_healthy
+volumes:
+  postgres_data:
